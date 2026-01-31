@@ -3,8 +3,27 @@ from discord import app_commands
 from discord.ext import commands
 import json
 import os
+from flask import Flask
+from threading import Thread
 
-# [1. 설정] 본인의 봇 토큰을 넣으세요
+# --- [Render용 Flask 서버 설정] ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "I am alive!"
+
+def run():
+    # Render는 PORT 환경 변수를 제공합니다. 없으면 8080을 사용합니다.
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.daemon = True
+    t.start()
+# ---------------------------------
+
 TOKEN = os.environ.get('DISCORD_TOKEN')
 
 STAGE_ORDER = ["3-1", "3-2", "3-3", "3-4", "3-5", "3-6", "3-7", "3-8", "3-9"]
@@ -57,7 +76,6 @@ class DonationModal(discord.ui.Modal):
             data["progress"][self.stage][self.item_name] = new_val
             save_data(data)
 
-            # 알림 문구 설정
             if self.is_reservation:
                 action_text = "예약" if amount >= 0 else "예약 차감"
                 emoji = "📅"
@@ -66,12 +84,9 @@ class DonationModal(discord.ui.Modal):
                 emoji = "🤫"
 
             await interaction.response.send_message(f"✅ {self.item_name} {abs(amount)}개 처리 완료!", ephemeral=True)
-            
-            # 전체 채널 알림 (예약은 단계를 명시)
             notif = f"{emoji} 누군가 **{self.stage}** 단계에 **{self.item_name}** {abs(amount)}개를 {action_text}했습니다!"
             await interaction.channel.send(notif)
 
-            # 자동 단계 전환 체크 (현재 단계 납품일 때만)
             if not self.is_reservation and amount > 0:
                 goals = SHIP_GOALS[self.stage]
                 if all(data["progress"][self.stage].get(it, 0) >= qty for it, qty in goals.items()):
@@ -85,7 +100,7 @@ class DonationModal(discord.ui.Modal):
         except ValueError:
             await interaction.response.send_message("❌ 숫자만 정확히 입력해주세요.", ephemeral=True)
 
-# --- 버튼 뷰 (현황 및 미리보기 공용) ---
+# --- 버튼 뷰 ---
 class DonationView(discord.ui.View):
     def __init__(self, stage, items, is_reservation=False):
         super().__init__(timeout=None)
@@ -147,8 +162,6 @@ async def preview(interaction: discord.Interaction, stage: str):
         
         embed.description = "\n".join(display_text)
         embed.set_footer(text="아래 버튼을 눌러 바로 예약할 수 있습니다.")
-        
-        # 예약 전용 버튼 뷰 생성 (is_reservation=True)
         await interaction.response.send_message(embed=embed, view=DonationView(stage, goals.keys(), True), ephemeral=True)
     else:
         await interaction.response.send_message("❌ 올바른 단계(3-1~3-9)를 입력하세요.", ephemeral=True)
@@ -169,4 +182,7 @@ async def reset(interaction: discord.Interaction):
     save_data(new_data)
     await interaction.response.send_message("🚨 모든 데이터가 초기화되었습니다. (3-1단계 시작)")
 
-bot.run(TOKEN)
+# --- 실행부 ---
+if __name__ == "__main__":
+    keep_alive()  # Render가 봇을 끄지 못하게 Flask 서버를 먼저 켭니다.
+    bot.run(TOKEN)
